@@ -23,6 +23,11 @@ jobs:
     steps:
       - name: Nacist repozitar
         uses: actions/checkout@v4
+      - name: Nainstalovat Playwright a Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
       - name: Stahnout a zpracovat oficialni XML
         run: python scripts/fetch_traffic.py
       - name: Ulozit zmenena data
