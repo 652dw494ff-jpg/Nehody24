@@ -8,13 +8,11 @@ import json
 import re
 import sys
 import urllib.request
-import asyncio
-import re as regex
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
-SOURCE = "https://cdi.policie.gov.cz/doprava-web-iframe/mapa"
+SOURCE = "https://policie.gov.cz/dopravni-informace/GetFile.aspx"
 OUT = Path("data/traffic.json")
 KEYWORDS = re.compile(r"nehod|uzav|omezen|provoz|kolon|silnic|dálnic|dalnic|průjezd|prujezd|vozidl|překáž|prekaz|doprav|událost|udalost|havári|havari", re.I)
 
@@ -45,41 +43,18 @@ def choose(fields, patterns):
 
 def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    # Use the official map's own XML-download control. The old direct-download
-    # URL published in the catalog currently returns 404, so do not rely on it.
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as exc:
-        raise RuntimeError("Chybi Playwright; workflow musi nainstalovat prohlizec Chromium.") from exc
-
-    async def download_xml():
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(accept_downloads=True)
-            try:
-                await page.goto(SOURCE, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(5000)
-                locator = page.get_by_text(regex.compile(r"St[aá]hnout v[sš]echny dopravn[ií] informace v XML", regex.I)).first
-                await locator.wait_for(state="visible", timeout=30000)
-                async with page.expect_download(timeout=30000) as download_info:
-                    await locator.click()
-                download = await download_info.value
-                path = await download.path()
-                if not path:
-                    raise RuntimeError("Oficialni mapa nevytvorila XML soubor ke stazeni.")
-                with open(path, "rb") as fh:
-                    return fh.read()
-            finally:
-                await browser.close()
-
-    raw = asyncio.run(download_xml())
-    if not raw or b"<" not in raw[:1000]:
-        raise RuntimeError("Oficialni mapa nevratila XML dokument.")
+    req = urllib.request.Request(SOURCE, headers={"User-Agent": "Mozilla/5.0 Nehody24/1.0", "Accept": "application/xml,text/xml,*/*"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        raw = response.read()
+        content_type = response.headers.get("Content-Type", "")
+        final_url = response.geturl()
+    if not raw or b"<" not in raw[:2000]:
+        raise RuntimeError("Zdroj nevratil XML dokument; finalni URL: " + final_url)
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as exc:
-        raise RuntimeError("Stazeny soubor neni platne XML: " + str(exc)) from exc
-    content_type = "application/xml (download from official Police CR map)"
+        preview = raw[:300].decode("utf-8", errors="replace")
+        raise RuntimeError("Odpoved zdroje neni platne XML (" + final_url + "): " + preview) from exc
 
     candidates = []
     seen = set()
@@ -126,7 +101,7 @@ def main():
     events = filtered[:500]
     warning = None if events else "XML se stáhl, ale automatický parser zatím nerozpoznal strukturu jednotlivých událostí. Zobrazujeme prázdný seznam, nikoli vymyšlená data."
     payload = {
-        "source": SOURCE,
+        "source": final_url,
         "sourceName": "Policie České republiky – Centrum dopravních informací",
         "fetchedAt": datetime.now(timezone.utc).isoformat(),
         "contentType": content_type,
