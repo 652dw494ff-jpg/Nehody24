@@ -1,0 +1,38 @@
+name: Aktualizace dopravnich dat
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    paths:
+      - ".github/workflows/update-traffic.yml"
+      - "scripts/fetch_traffic.py"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: traffic-data-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Nacist repozitar
+        uses: actions/checkout@v4
+      - name: Stahnout a zpracovat oficialni XML
+        run: python scripts/fetch_traffic.py
+      - name: Ulozit zmenena data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/traffic.json
+          if git diff --cached --quiet; then
+            echo "Data se nezmenila; neni potreba commit."
+          else
+            git commit -m "Automaticka aktualizace dopravnich dat"
+            git push
+          fi
